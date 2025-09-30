@@ -18,8 +18,8 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Optional, override
 
-from fastapi import APIRouter, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, FastAPI, Body, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from ldap3 import (
@@ -526,16 +526,36 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
             return render("ldap_login.html", next=next, error=error)
 
         @router.post("/token")
-        def create_token(
-            request: Request,
-            username: str = Form(...),
-            password: str = Form(...),
-            next: str | None = Form(default=None),
-        ):
-            info = self._ldap.authenticate(username=username, password=password)
+        async def create_token(request: Request):
+            # --- parse input: JSON or form ---
+            username = password = next_param = None
+            ct = (request.headers.get("content-type") or "").lower()
+
+            if ct.startswith("application/x-www-form-urlencoded") or ct.startswith("multipart/form-data"):
+                form = await request.form()
+                username = form.get("username")
+                password = form.get("password")
+                next_param = form.get("next")
+            else:
+                # Try JSON regardless of Content-Type (some clients lie)
+                try:
+                    payload = await request.json()
+                except Exception:
+                    payload = None
+                if isinstance(payload, dict):
+                    username = payload.get("username")
+                    password = payload.get("password")
+                    next_param = payload.get("next")
+
+            if not username or not password:
+                return JSONResponse({"detail": "username and password are required"}, status_code=422)
+
+            # --- authenticate via LDAP as you already do ---
+            info = self._ldap.authenticate(username=username, password=password)  # type: ignore[assignment]
             if not info:
-                # Redirect back to login with an error instead of 401 JSON
-                target = f"/auth/login?next={next or '/'}&error=Invalid%20credentials"
+                if "application/json" in (request.headers.get("accept") or ""):
+                    return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
+                target = f"/auth/login?next={(next_param or '/')}&&error=Invalid%20credentials"
                 return RedirectResponse(url=target, status_code=303)
 
             user = LdapUser(
@@ -545,57 +565,56 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
                 groups=info.get("groups", []),
             )
 
-            # --- Resolve role from LDAP groups ---
+            # role check...
             role = self._policy.role_for(user.groups)
-            if self._debug_logging:
-                log.info(f"LDAP login: user={user.username} groups={user.groups} role={role.name}")
-
-            if role == Role.NONE:
+            if role is Role.NONE:
                 msg = "You are not a member of any Airflow access group"
-                target = f"/auth/login?next={next or '/'}&error=" + msg.replace(" ", "%20")
+                if "application/json" in (request.headers.get("accept") or ""):
+                    return JSONResponse({"detail": msg}, status_code=403)
+                target = f"/auth/login?next={(next_param or '/')}&&error=" + msg.replace(" ", "%20")
                 return RedirectResponse(url=target, status_code=303)
 
-            # --- Create JWT directly using PyJWT and Airflow config ---
-            try:
-                from datetime import datetime, timedelta, timezone
+            # --- mint JWT (same as your current code) ---
+            from datetime import datetime, timedelta, timezone
+            import jwt
 
-                import jwt  # PyJWT
+            secret = conf.get("api_auth", "jwt_secret")
+            if not secret:
+                return JSONResponse({"detail": "api_auth.jwt_secret is not set"}, status_code=500)
 
-                secret = conf.get("api_auth", "jwt_secret")
-                if not secret:
-                    raise RuntimeError("api_auth.jwt_secret is not set")
+            alg = conf.get("api_auth", "jwt_algorithm", fallback="HS512") or "HS512"
+            audience = conf.get("api_auth", "jwt_audience", fallback="urn:airflow.apache.org:api")
+            aud = (audience.split(",")[0]).strip() if audience and "," in audience else audience
+            issuer = conf.get("api_auth", "jwt_issuer", fallback=None)
+            kid = conf.get("api_auth", "jwt_kid", fallback=None)
+            exp_secs = conf.getint("api_auth", "jwt_expiration_time", fallback=36000)
 
-                alg = conf.get("api_auth", "jwt_algorithm", fallback="HS512") or "HS512"
-                audience = conf.get("api_auth", "jwt_audience", fallback="urn:airflow.apache.org:api")
-                aud = (audience.split(",")[0]).strip() if audience and "," in audience else audience
-                issuer = conf.get("api_auth", "jwt_issuer", fallback=None)
-                kid = conf.get("api_auth", "jwt_kid", fallback=None)
-                exp_secs = conf.getint("api_auth", "jwt_expiration_time", fallback=36000)
+            now = datetime.now(timezone.utc)
+            claims = {
+                "sub": user.user_id,
+                "iat": int(now.timestamp()),
+                "nbf": int(now.timestamp()) - 5,
+                "exp": int((now + timedelta(seconds=exp_secs)).timestamp()),
+                "aud": aud,
+                "user": self.serialize_user(user),
+            }
+            if issuer:
+                claims["iss"] = issuer
+            headers = {"kid": kid} if kid else None
+            token = jwt.encode(claims, secret, algorithm=alg, headers=headers)
 
-                now = datetime.now(timezone.utc)
-                claims = {
-                    "sub": user.user_id,
-                    "iat": int(now.timestamp()),
-                    "nbf": int(now.timestamp()) - 5,
-                    "exp": int((now + timedelta(seconds=exp_secs)).timestamp()),
-                    "aud": aud,
-                    "user": self.serialize_user(user),
-                }
-                if issuer:
-                    claims["iss"] = issuer
+            # --- respond JSON for API callers, cookie+303 for browsers ---
+            wants_json = "application/json" in (request.headers.get("accept") or "")
+            if wants_json:
+                return JSONResponse({
+                    "access_token": token,
+                    "token_type": "Bearer",
+                    "expires_in": exp_secs,
+                })
 
-                headers = {"kid": kid} if kid else None
-
-                token = jwt.encode(claims, secret, algorithm=alg, headers=headers)
-            except Exception as e:
-                target = f"/auth/login?next={next or '/'}&error=" + str(e).replace(" ", "%20")
-                return RedirectResponse(url=target, status_code=303)
-
-            # Use 303 so the browser follows with GET (not POST) to the UI
-            target = _sanitize_next(next, request)
+            target = _sanitize_next(next_param, request) # type: ignore[arg-type]
             resp = RedirectResponse(url=target or "/", status_code=303)
             secure = (request.base_url.scheme == "https") or bool(conf.get("api", "ssl_cert", fallback=""))
-            # Important: NOT httponly; UI reads and then deletes this cookie per spec
             resp.set_cookie(COOKIE_NAME_JWT_TOKEN, token, secure=secure, httponly=False, samesite="lax", path="/")
             return resp
 
