@@ -1,0 +1,7 @@
+logs/
+*.pid
+.vscode/
+__pycache__/
+.venv/
+**/_external/
+_backup/

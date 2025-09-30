@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ instance_name | e }} · Sign in</title>
+  <link rel="icon" href="/static/pin_32.png"/>
+  <link rel="stylesheet" href="/auth/static/style.css"/>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="brand">
+        <img src="/auth/static/airflow.svg" alt="Airflow" class="logo"/>
+        <h1>{{ instance_name | e }}</h1>
+      </div>
+      <h2>Sign in</h2>
+      {% if login_tip %}<h4>{{ login_tip | e }}</h4>{% endif %}
+
+      {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+      <form method="post" action="/auth/token">
+        <input type="hidden" name="next" value="{{ next | e }}"/>
+        <div class="row">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" autocomplete="username" required/>
+        </div>
+        <div class="row">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required/>
+        </div>
+        <div class="actions">
+          <button type="submit">Sign in</button>
+        </div>
+      </form>
+      <div class="foot almost-hidden">Having issues? Contact your admin.</div>
+    </div>
+  </div>
+  <script>try{document.getElementById('username').focus()}catch(e){}</script>
+</body>
+</html>

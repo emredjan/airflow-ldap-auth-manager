@@ -1,0 +1,138 @@
+:root {
+  --bg: #0b1020;
+  --card: #10172a;
+  --text: #e5e7eb;
+  --muted: #818192;
+  --almost-hidden: #4d4d53;
+  --field: #0f172a;
+  --focus: #60a5fa;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: radial-gradient(1200px 800px at 20% -10%, #122042, transparent), var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial;
+}
+.wrap {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem;
+}
+.card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--card);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  padding: 28px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.logo {
+  width: 36px;
+  height: 36px;
+}
+h2 {
+  margin: 0.25rem 0 1.25rem;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  background: var(--field);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  outline: 0;
+  transition: border 0.15s, box-shadow 0.15s;
+}
+input:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
+}
+.row {
+  margin-bottom: 1rem;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+button {
+  width: 100%;
+  appearance: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  background: linear-gradient(120deg, #16a34a, #22c55e);
+  color: #04140b;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.06s ease, filter 0.2s;
+}
+button:hover {
+  filter: brightness(1.05);
+}
+button:active {
+  transform: translateY(1px);
+}
+.error {
+  background: #3b0d0d;
+  border: 1px solid #ef4444;
+  color: #fecaca;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.9rem;
+}
+.muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.almost-hidden {
+  color: var(--almost-hidden);
+  font-size: 0.85rem;
+}
+.foot {
+  text-align: center;
+  margin-top: 1rem;
+}
+.help {
+  text-align: center;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+}
+.css-536swo {
+  height: 35px;
+  width: 35px;
+}
