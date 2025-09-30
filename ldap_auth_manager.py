@@ -567,6 +567,8 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
             # role check...
             role = self._policy.role_for(user.groups)
+            if self._debug_logging:
+                log.info(f"LDAP login: user={user.username} groups={user.groups} role={role.name}")
             if role is Role.NONE:
                 msg = "You are not a member of any Airflow access group"
                 if "application/json" in (request.headers.get("accept") or ""):
