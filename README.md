@@ -16,6 +16,11 @@ A drop-in **Auth Manager** for **Apache Airflow 3.x** that authenticates users a
 - **Simple login UI** with configurable instance name and login tip
 - **Helpful logging:** logs which LDAP server the connection bound to
 
+## To-do
+
+- [ ] Extend the user & group search base config items to allow multiple entries (or LDAP `OR` syntax)
+- [ ] Package this and upload to pypi
+
 ## Requirements
 
 - **Python:** 3.12+
