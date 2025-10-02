@@ -158,6 +158,7 @@ bind_password =
 
 # Base DN under which user entries are searched.
 # Example (Active Directory): OU=Users,OU=Country,DC=example,DC=com
+# Supports multiple base DNs, separated by newlines, semicolons, or as a JSON array.
 #
 # Variable: AIRFLOW__LDAP_AUTH_MANAGER__USER_SEARCH_BASE
 #
