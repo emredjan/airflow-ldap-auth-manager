@@ -18,7 +18,7 @@ A drop-in **Auth Manager** for **Apache Airflow 3.x** that authenticates users a
 
 ## To-do
 
-- [ ] Extend the user & group search base config items to allow multiple entries (or LDAP `OR` syntax)
+- [x] Extend the user & group search base config items to allow multiple entries (or LDAP `OR` syntax)
 - [ ] Package this and upload to pypi
 
 ## Requirements

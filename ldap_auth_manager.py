@@ -9,8 +9,9 @@ Key notes:
 * JWT cookie handoff per Airflow 3 spec (`_token`, not httponly, secure if https).
 * Group→role mapping for admin/editor/viewer.
 """
-
+import json
 import logging
+import re
 import ssl
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -18,24 +19,16 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Optional, override
 
-from fastapi import APIRouter, FastAPI, Body, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import APIRouter, Body, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
-from ldap3 import (
-    ALL,
-    ALL_ATTRIBUTES,
-    AUTO_BIND_NO_TLS,
-    AUTO_BIND_TLS_BEFORE_BIND,
-    ROUND_ROBIN,
-    SUBTREE,
-    Connection,
-    Server,
-    ServerPool,
-    Tls,
-)
+from ldap3 import (ALL, ALL_ATTRIBUTES, AUTO_BIND_NO_TLS,
+                   AUTO_BIND_TLS_BEFORE_BIND, ROUND_ROBIN, SUBTREE, Connection,
+                   Server, ServerPool, Tls)
 
-from airflow.api_fastapi.auth.managers.base_auth_manager import COOKIE_NAME_JWT_TOKEN, BaseAuthManager, ResourceMethod
+from airflow.api_fastapi.auth.managers.base_auth_manager import (
+    COOKIE_NAME_JWT_TOKEN, BaseAuthManager, ResourceMethod)
 from airflow.api_fastapi.auth.managers.models import resource_details as rd
 from airflow.api_fastapi.auth.managers.models.base_user import BaseUser
 from airflow.configuration import conf
@@ -53,6 +46,22 @@ def _get_sensitive(section: str, key: str) -> str | None:
             return val
     # 2) Plaintext fallback from airflow.cfg
     return conf.get(section, key, fallback=None)
+
+
+def _listify_bases(val: str | None) -> list[str]:
+    if not val:
+        return []
+    s = val.strip()
+    # If someone gave us JSON, use it
+    if s.startswith("["):
+        try:
+            arr = json.loads(s)
+            return [x.strip() for x in arr if isinstance(x, str) and x.strip()]
+        except Exception:
+            pass
+    # Otherwise split on semicolons or newlines (never commas!)
+    parts = re.split(r"[;\n]+", s)
+    return [p.strip() for p in parts if p.strip()]
 
 
 # -----------------------------
@@ -82,7 +91,13 @@ class LdapClient:
 
         self._bind_dn = _get_sensitive("ldap_auth_manager", "bind_dn")
         self._bind_pw = _get_sensitive("ldap_auth_manager", "bind_password")
-        self._user_base = conf.get("ldap_auth_manager", "user_search_base")
+
+        bases_raw = conf.get("ldap_auth_manager", "user_search_base", fallback="")  # can be 1 or many
+        self._user_bases = _listify_bases(bases_raw)
+        if not self._user_bases:
+            raise ValueError("ldap_auth_manager.user_search_base must be set to at least one DN")
+
+        # self._user_base = conf.get("ldap_auth_manager", "user_search_base")
         self._user_filter_tpl = conf.get(
             "ldap_auth_manager",
             "user_search_filter",
@@ -152,16 +167,23 @@ class LdapClient:
     def authenticate(self, username: str, password: str) -> Optional[dict]:
         with self._service_conn() as svc:
             flt = self._user_filter_tpl.format(username=username)
-            if not svc.search(
-                search_base=self._user_base,
-                search_filter=flt,
-                search_scope=SUBTREE,
-                attributes=ALL_ATTRIBUTES,
-            ):
+            entry = None
+            for base in self._user_bases:
+                if svc.search(
+                    search_base=base,
+                    search_filter=flt,
+                    search_scope=SUBTREE,
+                    attributes=ALL_ATTRIBUTES,
+                ):
+                    entry = svc.entries[0]
+                    break
+            if not entry:
                 return None
-            entry = svc.entries[0]
             user_dn = entry.entry_dn
             attrs = entry.entry_attributes_as_dict
+
+        if self._debug_logging:
+            log.info(f"LDAP user search matched base={base!r} dn={user_dn!r}")
 
         try:
             with Connection(self._servers, user=user_dn, password=password, auto_bind=True):
@@ -285,7 +307,8 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
     @override
     async def get_user_from_token(self, token: str) -> LdapUser | None:
         import jwt
-        from jwt import ExpiredSignatureError, InvalidAudienceError, InvalidSignatureError, InvalidTokenError
+        from jwt import (ExpiredSignatureError, InvalidAudienceError,
+                         InvalidSignatureError, InvalidTokenError)
 
         secret = conf.get("api_auth", "jwt_secret")
         if not secret:
@@ -578,6 +601,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
             # --- mint JWT (same as your current code) ---
             from datetime import datetime, timedelta, timezone
+
             import jwt
 
             secret = conf.get("api_auth", "jwt_secret")
