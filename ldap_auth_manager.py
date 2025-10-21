@@ -650,7 +650,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
                 return JSONResponse({"detail": "username and password are required"}, status_code=422)
 
             # --- authenticate via LDAP as you already do ---
-            info = self._ldap.authenticate(username=username, password=password)
+            info = self._ldap.authenticate(username=username, password=password) # type: ignore
             if not info:
                 if "application/json" in (request.headers.get("accept") or ""):
                     return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
@@ -658,7 +658,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
                 return RedirectResponse(url=target, status_code=303)
 
             user = LdapUser(
-                user_id=info["dn"],
+                user_id=info["dn"], # type: ignore
                 username=info.get("username"),
                 email=info.get("email"),
                 groups=info.get("groups", []),
