@@ -17,9 +17,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Optional, override
+from typing import Any, Optional, TypedDict, override
 
-from fastapi import APIRouter, Body, FastAPI, Form, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
@@ -37,7 +37,18 @@ from airflow.sdk import Variable
 log = logging.getLogger("airflow.auth.ldap")
 
 
+class AuthenticatedUserData(TypedDict, total=False):
+    """LDAP authentication payload produced by :class:`LdapClient`."""
+
+    dn: str
+    attrs: dict[str, Any]
+    username: str | None
+    email: str | None
+    groups: list[str]
+
+
 def _get_sensitive(section: str, key: str) -> str | None:
+    """Return a potentially secret value stored either in Variables or airflow.cfg."""
     # 1) Secret indirection via Variables/secret backend
     secret_name = conf.get(section, f"{key}_secret", fallback=None)
     if secret_name:
@@ -49,6 +60,7 @@ def _get_sensitive(section: str, key: str) -> str | None:
 
 
 def _listify_bases(val: str | None) -> list[str]:
+    """Parse DN bases supplied either as JSON or separated by semicolons/newlines."""
     if not val:
         return []
     s = val.strip()
@@ -69,6 +81,8 @@ def _listify_bases(val: str | None) -> list[str]:
 # -----------------------------
 @dataclass
 class LdapUser(BaseUser):
+    """Airflow user representation enriched with LDAP metadata."""
+
     user_id: str
     username: str | None = None
     email: str | None = None
@@ -76,6 +90,8 @@ class LdapUser(BaseUser):
 
 
 class Role(IntEnum):
+    """Simple role ladder used for authorization checks."""
+
     NONE = 0
     VIEWER = 1
     EDITOR = 2
@@ -86,7 +102,10 @@ class Role(IntEnum):
 # Helper: LDAP access
 # -----------------------------
 class LdapClient:
+    """Wrapper around :mod:`ldap3` interactions for authentication searches."""
+
     def __init__(self):
+        """Initialise server pool and cached configuration values."""
         uris = [uri.strip() for uri in conf.get("ldap_auth_manager", "server_uri").split(",")]
 
         self._bind_dn = _get_sensitive("ldap_auth_manager", "bind_dn")
@@ -113,18 +132,18 @@ class LdapClient:
 
         servers = []
         for uri in uris:
+            lower_uri = uri.lower()
+            use_ssl = lower_uri.startswith("ldaps://")
             tls = None
-            if uri.lower().startswith("ldaps://") or self._start_tls:
-                ctx = ssl.create_default_context()
-                if not self._verify_ssl:
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
+            if use_ssl or self._start_tls:
+                # ``Tls`` handles certificate verification; disable only when explicitly requested.
                 tls = Tls(validate=ssl.CERT_REQUIRED if self._verify_ssl else ssl.CERT_NONE, version=ssl.PROTOCOL_TLS)
-            servers.append(Server(uri, use_ssl=uri.lower().startswith("ldaps://"), get_info=ALL, tls=tls))
+            servers.append(Server(uri, use_ssl=use_ssl, get_info=ALL, tls=tls))
 
         self._servers = ServerPool(servers, pool_strategy=ROUND_ROBIN)
 
     def _service_conn(self) -> Connection:
+        """Return a bound service connection used for privileged LDAP queries."""
 
         auto_bind = AUTO_BIND_TLS_BEFORE_BIND if self._start_tls else AUTO_BIND_NO_TLS
 
@@ -164,7 +183,8 @@ class LdapClient:
 
         return conn
 
-    def authenticate(self, username: str, password: str) -> Optional[dict]:
+    def authenticate(self, username: str, password: str) -> Optional[AuthenticatedUserData]:
+        """Authenticate a user by binding with their DN and password."""
         with self._service_conn() as svc:
             flt = self._user_filter_tpl.format(username=username)
             entry = None
@@ -177,8 +197,10 @@ class LdapClient:
                 ):
                     entry = svc.entries[0]
                     break
+
             if not entry:
                 return None
+
             user_dn = entry.entry_dn
             attrs = entry.entry_attributes_as_dict
 
@@ -195,6 +217,8 @@ class LdapClient:
         if self._group_base:
             with self._service_conn() as svc2:
                 member_attr = self._group_member_attr
+                # Some directories store either the DN or the username in the member attribute,
+                # so we query for both forms in a single OR filter.
                 member_filters = [f"({member_attr}={user_dn})", f"({member_attr}={username})"]
                 flt = f"(|{''.join(member_filters)})"
                 svc2.search(
@@ -206,15 +230,25 @@ class LdapClient:
                 for e in svc2.entries:
                     groups.append(str(e.cn))
 
-        norm_username = (
-            attrs.get(self._username_attr, [username])[0]
-            if isinstance(attrs.get(self._username_attr), list)
-            else attrs.get(self._username_attr, username)
-        )
-        email = attrs.get(self._email_attr)
-        email = email[0] if isinstance(email, list) else email
+        username_attr = attrs.get(self._username_attr)
+        if isinstance(username_attr, list):
+            norm_username = username_attr[0] if username_attr else username
+        else:
+            norm_username = username_attr or username
 
-        return {"dn": user_dn, "attrs": attrs, "username": norm_username, "email": email, "groups": groups}
+        email_attr = attrs.get(self._email_attr)
+        if isinstance(email_attr, list):
+            email = email_attr[0] if email_attr else None
+        else:
+            email = email_attr
+
+        return {
+            "dn": user_dn,
+            "attrs": attrs,
+            "username": norm_username,
+            "email": email,
+            "groups": groups,
+        }
 
 
 # -----------------------------
@@ -228,17 +262,19 @@ class Policy:
 
     def __init__(self):
         # Store as lowercase once; compare on lowercase later.
-        self.admin_groups = {g.lower() for g in _csv_to_set(conf.get("ldap_auth_manager", "admin_groups", fallback=""))}
-        self.editor_groups = {
-            g.lower() for g in _csv_to_set(conf.get("ldap_auth_manager", "editor_groups", fallback=""))
-        }
-        self.viewer_groups = {
-            g.lower() for g in _csv_to_set(conf.get("ldap_auth_manager", "viewer_groups", fallback=""))
-        }
+        self.admin_groups = self._load_group_config("admin_groups")
+        self.editor_groups = self._load_group_config("editor_groups")
+        self.viewer_groups = self._load_group_config("viewer_groups")
         # Default if user matches no configured groups
         self._default_role = Role.NONE  # <— deny by default
 
+    def _load_group_config(self, option: str) -> set[str]:
+        """Return the configured group list for ``option`` lowered for easy matching."""
+        raw_value = conf.get("ldap_auth_manager", option, fallback="")
+        return {group.lower() for group in _csv_to_set(raw_value)}
+
     def role_for(self, groups: Iterable[str]) -> Role:
+        """Return the highest Role allowed by the supplied group memberships."""
         gs = {g.lower() for g in (groups or [])}
         if self.admin_groups and (gs & self.admin_groups):
             return Role.ADMIN
@@ -250,20 +286,25 @@ class Policy:
         return self._default_role
 
     def at_least(self, groups: Iterable[str], min_role: Role) -> bool:
+        """Return ``True`` if ``groups`` map to a role >= ``min_role``."""
         return self.role_for(groups) >= min_role
 
     # kept for readability if you want to use them elsewhere
     def is_admin(self, groups: Iterable[str]) -> bool:
+        """Return ``True`` when ``groups`` grant administrator privileges."""
         return self.at_least(groups, Role.ADMIN)
 
     def is_editor(self, groups: Iterable[str]) -> bool:
+        """Return ``True`` when ``groups`` grant editor privileges."""
         return self.at_least(groups, Role.EDITOR)
 
     def is_viewer(self, groups: Iterable[str]) -> bool:
+        """Return ``True`` when ``groups`` grant viewer privileges."""
         return self.at_least(groups, Role.VIEWER)
 
 
 def _csv_to_set(val: str) -> set[str]:
+    """Convert a comma separated string into a set of trimmed tokens."""
     return {x.strip() for x in val.split(",") if x.strip()}
 
 
@@ -271,7 +312,10 @@ def _csv_to_set(val: str) -> set[str]:
 # LDAP Auth Manager
 # -----------------------------
 class LdapAuthManager(BaseAuthManager[LdapUser]):
+    """LDAP backed implementation of Airflow's :class:`BaseAuthManager`."""
+
     def __init__(self, context=None):
+        """Create the manager with configured LDAP client and authorization policy."""
         super().__init__(context=context)
         self._ldap = LdapClient()
         self._policy = Policy()
@@ -280,14 +324,17 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
     # --- Authentication surface ---
     @override
     def get_url_login(self, **kwargs) -> str:
+        """Return the login URL including the ``next`` redirect parameter."""
         next_url = kwargs.get("next", "/")
         return f"/auth/login?next={next_url}"
 
     def get_url_logout(self) -> Optional[str]:
+        """Return the configured logout redirect target."""
         return conf.get("ldap_auth_manager", "logout_redirect", fallback="/")
 
     @override
     def serialize_user(self, user: LdapUser) -> dict:
+        """Serialize ``LdapUser`` instances for storage inside JWT payloads."""
         return {
             "user_id": user.user_id,
             "username": user.username,
@@ -297,6 +344,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
     @override
     def deserialize_user(self, data: dict) -> LdapUser:
+        """Recreate ``LdapUser`` instances from serialized payloads."""
         return LdapUser(
             user_id=str(data.get("user_id")),
             username=data.get("username"),
@@ -306,6 +354,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
     @override
     async def get_user_from_token(self, token: str) -> LdapUser | None:
+        """Decode ``token`` and return a user only if policy permits."""
         import jwt
         from jwt import (ExpiredSignatureError, InvalidAudienceError,
                          InvalidSignatureError, InvalidTokenError)
@@ -342,11 +391,13 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
     # --- Menu filtering ---
     def filter_authorized_menu_items(self, menu_items, *, user: LdapUser):
+        """Return the menu unchanged; permissions are enforced per endpoint."""
         # Everyone can see the whole menu; the endpoints themselves enforce write restrictions.
         return list(menu_items or [])
 
     # --- Authorization surface ---
     def _norm_method(self, method) -> str:
+        """Coerce ``method`` (enum or string) into an uppercase HTTP verb."""
         name = getattr(method, "name", None)
         if name:
             return str(name).upper()
@@ -354,6 +405,25 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
         if value is not None:
             return str(value).upper()
         return str(method).upper()
+
+    def _is_dag_run_scoped(
+        self, write_scope: str | None, access_entity: "rd.DagAccessEntity | None"
+    ) -> bool:
+        """Return ``True`` when the request targets DAG run level operations."""
+
+        if write_scope == "dag_run":
+            return True
+
+        if access_entity is None:
+            return False
+
+        try:
+            ae_name = getattr(access_entity, "name", None)
+            if ae_name is None:
+                ae_name = str(access_entity)
+            return str(ae_name).upper() in {"DAG_RUN", "DAGRUN", "RUN"}
+        except Exception:
+            return False
 
     def _is_authorized(
         self,
@@ -384,18 +454,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
         # Non-GET (write-ish)
         # Detect dag-run scoped writes either via explicit marker or DagAccessEntity
-        dag_run_scoped = False
-        if write_scope == "dag_run":
-            dag_run_scoped = True
-        elif access_entity is not None:
-            try:
-                # Handle both enum and str cases
-                ae_name = getattr(access_entity, "name", str(access_entity)).upper()
-                dag_run_scoped = ae_name in {"DAG_RUN", "DAGRUN", "RUN"}
-            except Exception:
-                pass
-
-        if dag_run_scoped:
+        if self._is_dag_run_scoped(write_scope, access_entity):
             return self._policy.at_least(user.groups, Role.EDITOR)
 
         # Everything else requires full admin
@@ -405,6 +464,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
     def is_authorized_configuration(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.ConfigurationDetails | None = None
     ) -> bool:
+        """Allow configuration access for admins, read-only for others."""
         # Configuration changes are admin-only; reads are fine for all.
         return self._is_authorized(method=method, user=user)
 
@@ -412,54 +472,63 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
     def is_authorized_connection(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.ConnectionDetails | None = None
     ) -> bool:
+        """Authorize access to individual connections using the global policy."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def batch_is_authorized_connection(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.ConnectionDetails | None = None
     ) -> bool:
+        """Apply the same rules as ``is_authorized_connection`` for batch endpoints."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def batch_is_authorized_variable(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.VariableDetails | None = None
     ) -> bool:
+        """Apply standard policy to batch variable endpoints."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def is_authorized_variable(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.VariableDetails | None = None
     ) -> bool:
+        """Authorize individual variable operations via the central policy."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def batch_is_authorized_pool(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.PoolDetails | None = None
     ) -> bool:
+        """Apply the same rules as pool single-item operations."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def is_authorized_pool(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.PoolDetails | None = None
     ) -> bool:
+        """Authorize individual pool operations via the shared policy."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def is_authorized_asset(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.AssetDetails | None = None
     ) -> bool:
+        """Authorize asset interactions via the shared policy."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def is_authorized_asset_alias(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.AssetAliasDetails | None = None
     ) -> bool:
+        """Authorize asset alias interactions via the shared policy."""
         return self._is_authorized(method=method, user=user)
 
     @override
     def is_authorized_backfill(
         self, *, method: ResourceMethod, user: LdapUser, details: rd.BackfillDetails | None = None
     ) -> bool:
+        """Require admin access for disruptive backfill operations."""
         # Backfills are disruptive -> admin-only for writes; reads for all
         return self._is_authorized(method=method, user=user, write_scope=None)
 
@@ -472,6 +541,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
         access_entity: rd.DagAccessEntity | None = None,
         details: rd.DagDetails | None = None,
     ) -> bool:
+        """Authorize DAG operations, allowing editors to manage DAG runs."""
         # Let editor write only when the operation targets DAG RUNs
         return self._is_authorized(method=method, user=user, access_entity=access_entity, write_scope=None)
 
@@ -484,16 +554,19 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
         access_entity: rd.DagAccessEntity | None = None,
         details: rd.DagDetails | None = None,
     ) -> bool:
+        """Batch DAG endpoints follow the same rules as single DAG operations."""
         # Let editor write only when the operation targets DAG RUNs
         return self._is_authorized(method=method, user=user, access_entity=access_entity, write_scope=None)
 
     @override
     def is_authorized_view(self, *, access_view: rd.AccessView, user: LdapUser) -> bool:
+        """Permit viewer-level access to read-only views."""
         # Views are read-only by design
         return self._policy.at_least(user.groups, Role.VIEWER)
 
     @override
     def is_authorized_custom_view(self, *, method: ResourceMethod | str, resource_name: str, user: LdapUser) -> bool:
+        """Authorize arbitrary custom views using the default policy."""
         return self._is_authorized(method=method, user=user)
 
     # -----------------------------
@@ -513,6 +586,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
         jinja_env.globals.update(instance_name=instance_name, login_tip=login_tip)
 
         def render(name: str, **ctx) -> HTMLResponse:
+            """Render ``name`` with the provided context."""
             tpl = jinja_env.get_template(name)
             return HTMLResponse(tpl.render(**ctx))
 
@@ -546,10 +620,12 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
         @router.get("/login", response_class=HTMLResponse)
         def login_form(next: str = "/", error: str | None = None):
+            """Serve the HTML login form."""
             return render("ldap_login.html", next=next, error=error)
 
         @router.post("/token")
         async def create_token(request: Request):
+            """Authenticate the user and return/issue a JWT token."""
             # --- parse input: JSON or form ---
             username = password = next_param = None
             ct = (request.headers.get("content-type") or "").lower()
@@ -574,7 +650,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
                 return JSONResponse({"detail": "username and password are required"}, status_code=422)
 
             # --- authenticate via LDAP as you already do ---
-            info = self._ldap.authenticate(username=username, password=password)  # type: ignore[assignment]
+            info = self._ldap.authenticate(username=username, password=password)
             if not info:
                 if "application/json" in (request.headers.get("accept") or ""):
                     return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
@@ -646,6 +722,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
         @router.get("/logout")
         def logout(next: str = "/"):
+            """Clear the JWT cookie and redirect to ``next`` or the configured URL."""
             resp = RedirectResponse(url=conf.get("ldap_auth_manager", "logout_redirect", fallback=next))
             resp.delete_cookie(COOKIE_NAME_JWT_TOKEN, path="/")
             return resp
