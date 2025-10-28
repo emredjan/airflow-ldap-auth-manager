@@ -675,7 +675,7 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
                 target = f"/auth/login?next={(next_param or '/')}&&error=" + msg.replace(" ", "%20")
                 return RedirectResponse(url=target, status_code=303)
 
-            # --- mint JWT (same as your current code) ---
+            # --- mint JWT ---
             from datetime import datetime, timedelta, timezone
 
             import jwt
