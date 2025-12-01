@@ -1,0 +1,46 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airflow-ldap-auth-manager"
+version = "0.1.0"
+description = "LDAP-based AuthManager for Apache Airflow 3.x"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "License :: OSI Approved :: MIT License",
+  "Framework :: Apache Airflow",
+  "Framework :: Apache Airflow :: 3",
+]
+
+authors = [
+  { name = "Emre Can", email = "emredjan@gmail.com" }
+]
+
+dependencies = [
+  "apache-airflow>=3.1.0",
+  "ldap3>=2.9",
+  "fastapi>=0.110",
+  "jinja2>=3.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/emredjan/airflow-ldap-auth-manager"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Make sure templates and static assets get installed
+"airflow_ldap_auth_manager" = [
+  "templates/*.html",
+  "static/*",
+]

@@ -30,19 +30,19 @@ A drop-in **Auth Manager** for **Apache Airflow 3.x** that authenticates users a
 
 ## Installation
 
-_This guide is for a virtualenv based Airflow installation, adapt this to your requirements (docker, kubernetes etc.)_
-
-Install `ldap3` into your airflow environment
-
-Clone the repository (or download as zip and unpack) into somewhere in Airflow's `PYTHONPATH` (`$AIRFLOW_HOME/config` and `$AIRFLOW_HOME/plugins` work nice):
+Install from PyPi into the environment where Airflow is installed (Not yet available):
 
 ```shell
-git clone https://github.com/<you>/<repo>.git
-cd <repo>
-pip install -e . # Make sure you're on Airflow environment
+pip install airflow-ldap-auth-manager
 ```
 
-Ensure the package is on Airflow’s `PYTHONPATH` (the editable install above achieves that).
+Install after cloning the project:
+
+```shell
+git clone <repo url>
+cd airflow-ldap-auth-manager
+pip install .
+```
 
 ## Configure Airflow
 
@@ -53,10 +53,9 @@ Changes needed in `airflow.cfg`:
 ```ini
 [core]
 # Fully qualified path to the auth manager class in this repo
-auth_manager = company_name.auth_managers.ldap_auth_manager.LDAPAuthManager
+auth_manager = airflow_ldap_auth_manager.LDAPAuthManager
 ```
 
-Replace company_name.auth_managers.ldap_auth_manager.LDAPAuthManager with the real import path from your project.
 
 ### Make sure JWT settings are configured correctly
 
