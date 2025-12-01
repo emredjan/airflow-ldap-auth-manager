@@ -19,7 +19,7 @@ A drop-in **Auth Manager** for **Apache Airflow 3.x** that authenticates users a
 ## To-do
 
 - [x] Extend the user & group search base config items to allow multiple entries (or LDAP `OR` syntax)
-- [ ] Package this and upload to pypi
+- [x] Package this and upload to pypi
 
 ## Requirements
 
@@ -30,13 +30,14 @@ A drop-in **Auth Manager** for **Apache Airflow 3.x** that authenticates users a
 
 ## Installation
 
-Install from PyPi into the environment where Airflow is installed (Not yet available):
+Install from PyPi into the environment where Airflow is installed:
 
 ```shell
 pip install airflow-ldap-auth-manager
 ```
 
-Install after cloning the project:
+
+Or install after cloning the project:
 
 ```shell
 git clone <repo url>
