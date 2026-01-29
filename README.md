@@ -54,7 +54,7 @@ Changes needed in `airflow.cfg`:
 ```ini
 [core]
 # Fully qualified path to the auth manager class in this repo
-auth_manager = airflow_ldap_auth_manager.LDAPAuthManager
+auth_manager = airflow_ldap_auth_manager.LdapAuthManager
 ```
 
 
@@ -118,7 +118,7 @@ Restart the api-server after changes.
 
 ``` ini
 [ldap_auth_manager]
-# LDAP authentication/authorization settings for LDAPAuthManager.
+# LDAP authentication/authorization settings for LdapAuthManager.
 # This section supports multiple redundant servers, secure transport (LDAPS or StartTLS),
 # and secret indirection for bind credentials via Airflow’s Secrets Backend.
 
