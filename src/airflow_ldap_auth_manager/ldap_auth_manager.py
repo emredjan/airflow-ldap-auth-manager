@@ -717,7 +717,9 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
             target = _sanitize_next(next_param, request) # type: ignore[arg-type]
             resp = RedirectResponse(url=target or "/", status_code=303)
             secure = (request.base_url.scheme == "https") or bool(conf.get("api", "ssl_cert", fallback=""))
-            resp.set_cookie(COOKIE_NAME_JWT_TOKEN, token, secure=secure, httponly=False, samesite="lax", path="/")
+            resp.set_cookie(
+                COOKIE_NAME_JWT_TOKEN, token, secure=secure, httponly=False, samesite='lax', path='/', max_age=exp_secs
+            )
             return resp
 
         @router.get("/logout")
