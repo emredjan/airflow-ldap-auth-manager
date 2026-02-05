@@ -1,5 +1,5 @@
 """
-LDAPAuthManager for Apache Airflow 3.1+
+LdapAuthManager for Apache Airflow 3.1+
 
 Key notes:
 * Implements all abstract methods from BaseAuthManager, including
