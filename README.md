@@ -261,11 +261,17 @@ logout_redirect = /
 #
 debug_logging = false
 
-# Optional login hint shown under "Sign in". Leave empty to hide.
+# Optional login hint shown under "Sign in" title. Leave empty to hide.
 #
 # Variable: AIRFLOW__LDAP_AUTH_MANAGER__LOGIN_TIP
 #
 login_tip = Using your Company credentials
+
+# Optional override to the support hint shown under the "Sign in" button.
+#
+# Variable: AIRFLOW__LDAP_AUTH_MANAGER__SUPPORT_TIP
+#
+support_tip = Having issues? Raise a ticket to the helpdesk.
 ```
 
 
