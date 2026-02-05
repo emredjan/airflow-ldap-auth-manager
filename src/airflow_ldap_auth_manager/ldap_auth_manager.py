@@ -582,8 +582,9 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
 
         instance_name = conf.get("api", "instance_name", fallback="Airflow")
         login_tip = conf.get("ldap_auth_manager", "login_tip", fallback="")
+        support_tip = conf.get("ldap_auth_manager", "support_tip", fallback="Having issues? Contact your admin.")
 
-        jinja_env.globals.update(instance_name=instance_name, login_tip=login_tip)
+        jinja_env.globals.update(instance_name=instance_name, login_tip=login_tip, support_tip=support_tip)
 
         def render(name: str, **ctx) -> HTMLResponse:
             """Render ``name`` with the provided context."""
