@@ -11,10 +11,10 @@
   <div class="wrap">
     <div class="card">
       <div class="brand">
-	<h2>Sign in</h2>
         <img src="/auth/static/airflow.svg" alt="Airflow" class="logo"/>
-	<h1>{{ instance_name | e }}</h1>
+        <h1>{{ instance_name | e }}</h1>
       </div>
+      <h2>Sign in</h2>
       {% if login_tip %}<h4>{{ login_tip | e }}</h4>{% endif %}
 
       {% if error %}<div class="error">{{ error }}</div>{% endif %}
