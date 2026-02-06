@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "airflow-ldap-auth-manager"
-version = "0.1.0"
+version = "0.1.1"
 description = "LDAP-based AuthManager for Apache Airflow 3.x"
 readme = "README.md"
 requires-python = ">=3.9"
