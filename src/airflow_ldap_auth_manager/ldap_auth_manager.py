@@ -329,8 +329,8 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
         return f"/auth/login?next={next_url}"
 
     def get_url_logout(self) -> Optional[str]:
-        """Return the configured logout redirect target."""
-        return conf.get("ldap_auth_manager", "logout_redirect", fallback="/")
+        """Return the auth manager logout endpoint."""
+        return "/auth/logout"
 
     @override
     def serialize_user(self, user: LdapUser) -> dict:
@@ -442,6 +442,9 @@ class LdapAuthManager(BaseAuthManager[LdapUser]):
             - If write_scope == "dag_run" (or DagAccessEntity.DAG_RUN), Editor+
             - Else Admin only
         """
+        if not user:
+            return False
+
         role = self._policy.role_for(user.groups)
         if role == Role.NONE:
             return False  # deny outright
